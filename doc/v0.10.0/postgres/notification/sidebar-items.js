@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["BlockingIter","An iterator over notifications which will block if none are pending."],["Iter","An iterator over pending notifications."],["Notification","An asynchronous notification."],["Notifications","An iterator over asynchronous notifications."]]});
