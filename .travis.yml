@@ -1,13 +1,11 @@
 language: rust
-sudo: required
+os: osx
 rust:
 - nightly
 - beta
 - 1.4.0
-addons:
-  postgresql: 9.4
 before_script:
 - "./.travis/setup.sh"
 script:
 - cargo test
-- cargo test --features "uuid rustc-serialize time unix_socket serde_json chrono openssl bit-vec"
+- cargo test --features "uuid rustc-serialize time unix_socket serde_json chrono openssl bit-vec security-framework"
