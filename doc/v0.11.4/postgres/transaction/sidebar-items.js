@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["Config","Configuration of a transaction."],["Transaction","A transaction on a database connection."]]});
