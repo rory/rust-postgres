@@ -113,9 +113,9 @@ impl DbErrorNew for DbError {
             column: map.remove(&b'c'),
             datatype: map.remove(&b'd'),
             constraint: map.remove(&b'n'),
-            file: try!(map.remove(&b'F').ok_or(())),
-            line: try!(map.remove(&b'L').and_then(|l| l.parse().ok()).ok_or(())),
-            routine: try!(map.remove(&b'R').ok_or(())),
+            file: map.remove(&b'F').unwrap_or(String::new()),
+            line: map.remove(&b'L').and_then(|l| l.parse().ok()).unwrap_or(0),
+            routine: map.remove(&b'R').unwrap_or(String::new()),
             _p: (),
         })
     }

@@ -421,6 +421,9 @@ impl InnerConnection {
             Err(Error::Io(e)) => return Err(ConnectError::Io(e)),
             // Old versions of Postgres and things like Redshift don't support enums
             Err(Error::Db(ref e)) if e.code == SqlState::UndefinedTable => {}
+            // Cockroach exposes a Postgres interface but doesn't define pg_catalog
+            // It also returns the wrong error type
+            Err(Error::Db(ref e)) if e.code == SqlState::InternalError => return Ok(()),
             Err(Error::Db(e)) => return Err(ConnectError::Db(e)),
             Err(Error::Conversion(_)) => unreachable!(),
         }
