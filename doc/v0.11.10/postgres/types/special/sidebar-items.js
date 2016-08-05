@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["Date","A wrapper that can be used to represent infinity with `Type::Date` types."],["Timestamp","A wrapper that can be used to represent infinity with `Type::Timestamp` and `Type::TimestampTZ` types."]]});
