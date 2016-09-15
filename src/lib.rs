@@ -51,6 +51,8 @@ extern crate log;
 extern crate phf;
 #[cfg(feature = "unix_socket")]
 extern crate unix_socket;
+#[cfg(feature = "users")]
+extern crate users;
 
 use bufstream::BufStream;
 use md5::Md5;
@@ -103,7 +105,7 @@ const TYPEINFO_COMPOSITE_QUERY: &'static str = "__typeinfo_composite";
 pub type Result<T> = result::Result<T, Error>;
 
 /// Specifies the target server to connect to.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConnectTarget {
     /// Connect via TCP to the specified host.
     Tcp(String),
@@ -115,7 +117,7 @@ pub enum ConnectTarget {
 }
 
 /// Authentication information.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UserInfo {
     /// The username.
     pub user: String,
@@ -207,6 +209,155 @@ impl IntoConnectParams for Url {
             user: user,
             database: database,
             options: options,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Params {
+    host: Option<String>,
+    port: Option<u16>,
+    user: Option<String>,
+    password: Option<String>,
+    database: Option<String>,
+    options: Vec<(String, String)>,
+
+    auto_guess_user: bool,
+}
+
+impl Params {
+    pub fn new() -> Self {
+        Params{ host: None, port: None, user: None, password: None, database: None, options: Vec::new(), auto_guess_user: true, }
+    }
+
+    pub fn user<S>(mut self, user: S) -> Self where S: Into<String> {
+        self.user = Some(user.into());
+        self
+    }
+
+    pub fn password<S>(mut self, password: S) -> Self where S: Into<String> {
+        self.password = Some(password.into());
+        self
+    }
+    // Convenience methods
+    pub fn username<S>(mut self, user: S) -> Self where S: Into<String> { self.user(user) }
+    pub fn pass<S>(mut self, pass: S) -> Self where S: Into<String> { self.password(pass) }
+
+    pub fn no_user(mut self) -> Self {
+        self.user = None;
+        self.auto_guess_user = false;
+        self
+    }
+    pub fn auto_guess_user(mut self) -> Self {
+        self.auto_guess_user = true;
+        self
+    }
+
+    pub fn database<S>(mut self, database: S) -> Self where S: Into<String> {
+        self.database = Some(database.into());
+        self
+    }
+
+    pub fn host<S>(mut self, host: S) -> Self where S: Into<String> {
+        self.host = Some(host.into());
+        self
+    }
+
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+
+    pub fn option<S>(mut self, k: S, v: S) -> Self where S: Into<String> {
+        self.options.push((k.into(), v.into()));
+        self
+    }
+
+    pub fn opt_user<S>(mut self, user: Option<S>) -> Self where S: Into<String> {
+        self.user = user.map(|x| x.into());
+        self
+    }
+    pub fn opt_username<S>(mut self, user: Option<S>) -> Self where S: Into<String> { self.opt_user(user) }
+
+    pub fn opt_password<S>(mut self, password: Option<S>) -> Self where S: Into<String> {
+        self.password = password.map(|x| x.into());
+        self
+    }
+    pub fn opt_pass<S>(mut self, pass: Option<S>) -> Self where S: Into<String> { self.opt_password(pass) }
+
+    pub fn opt_database<S>(mut self, database: Option<S>) -> Self where S: Into<String> {
+        self.database = database.map(|x| x.into());
+        self
+    }
+
+    pub fn opt_host<S>(mut self, h: Option<S>) -> Self where S: Into<String> {
+        self.host = h.map(|x| x.into());
+        self
+    }
+
+    pub fn opt_port(mut self, port: Option<u16>) -> Self {
+        self.port = port;
+        self
+    }
+}
+
+impl IntoConnectParams for Params {
+    fn into_connect_params(self) -> result::Result<ConnectParams, Box<StdError + Sync + Send>> {
+        // FIXME support PGDATABASE
+        // FIXME support PGUSER
+        // FIXME support PGPORT
+        // FIXME support PGHOST
+
+        #[cfg(feature = "users")]
+        fn get_currently_running_username() -> Option<String> {
+            let username = users::get_user_by_uid(users::get_current_uid()).unwrap().name().to_string();
+            Some(username)
+        }
+        #[cfg(not(feature = "users"))]
+        fn get_currently_running_username() -> Option<String> {
+            None
+        }
+
+        let username = match self.user {
+            Some(username) => Some(username.clone()),
+            None => if self.auto_guess_user {
+                        match get_currently_running_username() {
+                            None => None,
+                            Some(username) => Some(username),
+                        }
+                    } else {
+                        None
+                    }
+        };
+
+        let userinfo = match username {
+            None => None,
+            Some(username) => Some(UserInfo{ user: username, password: self.password }),
+        };
+
+
+        #[cfg(any(feature = "unix_socket", all(unix, feature = "nightly")))]
+        fn make_unix<S>(maybe_path: S) -> result::Result<ConnectTarget, Box<StdError + Sync + Send>> where S: Into<String> {
+            Ok(ConnectTarget::Unix(PathBuf::from(maybe_path.into())))
+        }
+        #[cfg(not(any(feature = "unix_socket", all(unix, feature = "nightly"))))]
+        fn make_unix<S>(_: S) -> result::Result<ConnectTarget, Box<StdError + Sync + Send>> where S: Into<String> {
+            Err("You have not specified a host. Unix socket support requires the `unix_socket` or `nightly` features (which you don't have). Enable that feature or manually set a host".into())
+        }
+        let target = match self.host {
+            None => try!(make_unix("/var/run/postgresql/")),
+            Some(h) => ConnectTarget::Tcp(h),
+        };
+
+        let port: Option<u16> = self.port;
+        let database = self.database;
+
+        Ok(ConnectParams {
+            target: target,
+            port: port,
+            user: userinfo,
+            database: database,
+            options: self.options,
         })
     }
 }

@@ -5,6 +5,8 @@ extern crate url;
 extern crate openssl;
 #[cfg(feature = "security-framework")]
 extern crate security_framework;
+#[cfg(feature = "users")]
+extern crate users;
 
 #[cfg(feature = "openssl")]
 use openssl::ssl::{SslContext, SslMethod};
@@ -14,7 +16,7 @@ use std::io::prelude::*;
 use std::time::Duration;
 
 use postgres::{HandleNotice, Connection, GenericConnection, SslMode, IntoConnectParams,
-               IsolationLevel, transaction};
+               IsolationLevel, transaction, Params, ConnectParams, ConnectTarget, UserInfo};
 use postgres::error::{Error, ConnectError, DbError};
 use postgres::types::{Oid, Type, Kind, WrongType};
 use postgres::error::SqlState::{SyntaxError,
@@ -1066,4 +1068,120 @@ fn transaction_set_config() {
           .deferrable(true);
     trans.set_config(&config).unwrap();
     trans.finish().unwrap();
+}
+
+
+#[test]
+fn test_easy_dynamic_connect_params_all() {
+    let connect_params: ConnectParams = Params::new().user("postgres").host("example.com").into_connect_params().unwrap();
+    assert_eq!(connect_params.target, ConnectTarget::Tcp("example.com".to_string()));
+    assert_eq!(connect_params.port, None);
+    assert_eq!(connect_params.user, Some(UserInfo { user: "postgres".to_string(), password: None} ));
+    assert_eq!(connect_params.options, vec![]);
+    assert_eq!(connect_params.database, None);
+
+    let connect_params: ConnectParams = Params::new().user("postgres").host("localhost").port(9999).into_connect_params().unwrap();
+    assert_eq!(connect_params.target, ConnectTarget::Tcp("localhost".to_string()));
+    assert_eq!(connect_params.port, Some(9999));
+
+    let empty: Option<String> = None;
+    let connect_params: ConnectParams = Params::new().user("postgres").host("example.com").opt_password(empty.clone()).into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "postgres".to_string(), password: None } ));
+
+    let connect_params: ConnectParams = Params::new().user("postgres").host("example.com").opt_password(Some("pass")).into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "postgres".to_string(), password: Some("pass".to_string()) } ));
+
+    let connect_params: ConnectParams = Params::new().opt_user(Some("postgres")).host("example.com").opt_password(empty.clone()).into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "postgres".to_string(), password: None } ));
+
+    let connect_params: ConnectParams = Params::new().user("postgres").host("example.com").option("a", "b").option("x", "y").into_connect_params().unwrap();
+    assert_eq!(connect_params.options, vec![("a".to_string(), "b".to_string()), ("x".to_string(), "y".to_string())]);
+
+    let connect_params = Params::new().into_connect_params();
+    if cfg!(any(feature = "unix_socket", all(unix, feature = "nightly"))) {
+        assert!(connect_params.is_ok());
+    } else {
+        assert!(connect_params.is_err());
+    }
+}
+
+#[test]
+#[cfg(any(feature = "unix_socket", all(unix, feature = "nightly")))]
+fn test_easy_dynamic_connect_params_with_socket() {
+    let connect_params: ConnectParams = Params::new().into_connect_params().unwrap();
+    assert_eq!(connect_params.target, ConnectTarget::Unix(::std::path::PathBuf::from("/var/run/postgresql/")));
+
+    let connect_params: ConnectParams = Params::new().host("example.com").into_connect_params().unwrap();
+    assert_eq!(connect_params.target, ConnectTarget::Tcp("example.com".to_string()));
+
+}
+
+#[test]
+#[cfg(not(any(feature = "unix_socket", all(unix, feature = "nightly"))))]
+fn test_easy_dynamic_connect_params_without_socket() {
+    // Without the unix_socket feature, we cannot convert if we don't specify hostname
+    let connect_params = Params::new().into_connect_params();
+    assert!(connect_params.is_err());
+}
+
+#[test]
+#[cfg(feature="users")]
+fn test_easy_dynamic_connect_params_with_users() {
+    use users;
+    
+    // what user are we running this tests as
+    let username = users::get_user_by_uid(users::get_current_uid()).unwrap().name().to_string();
+
+    // Nothing specified, so it'll try to auto guess from currently running user
+    let connect_params = Params::new().host("example.com").into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: username.to_string(), password: None} ));
+
+    // Not provided, but "no_user" called, so it'll have no UserInfo
+    let connect_params = Params::new().host("example.com").no_user().into_connect_params().unwrap();
+    assert_eq!(connect_params.user, None);
+
+    // Username manually specified, so it'll use that
+    let connect_params = Params::new().host("example.com").username("foo").into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "foo".to_string(), password: None} ));
+
+    // .no_user() called, but afterwards it calls username(), so use that username
+    let connect_params = Params::new().host("example.com").no_user().username("foo").into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "foo".to_string(), password: None} ));
+
+    // Sets username, but then calls no_user. So no userinfo
+    let connect_params = Params::new().host("example.com").username("foo").no_user().into_connect_params().unwrap();
+    assert_eq!(connect_params.user, None);
+
+    // We can "undo" a no_user call with the auto_guess_user param
+    let connect_params = Params::new().host("example.com").no_user().auto_guess_user().into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: username.to_string(), password: None} ));
+}
+
+#[test]
+#[cfg(not(feature="users"))]
+fn test_easy_dynamic_connect_params_without_users() {
+    // Nothing specified, so it'll have no userinfo
+    let connect_params = Params::new().host("example.com").into_connect_params().unwrap();
+    assert_eq!(connect_params.user, None);
+
+    // Not provided, but "no_user" called, so it'll have no UserInfo
+    let connect_params = Params::new().host("example.com").no_user().into_connect_params().unwrap();
+    assert_eq!(connect_params.user, None);
+
+    // Username manually specified, so it'll use that
+    let connect_params = Params::new().host("example.com").username("foo").into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "foo".to_string(), password: None} ));
+
+    // .no_user() called, but afterwards it calls username(), so use that username
+    let connect_params = Params::new().host("example.com").no_user().username("foo").into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "foo".to_string(), password: None} ));
+
+    // Sets username, but then calls no_user. So no userinfo
+    let connect_params = Params::new().host("example.com").username("foo").no_user().into_connect_params().unwrap();
+    assert_eq!(connect_params.user, None);
+
+    // We can "undo" a no_user call with the auto_guess_user param, but in this case, we still get
+    // None
+    let connect_params = Params::new().host("example.com").no_user().auto_guess_user().into_connect_params().unwrap();
+    assert_eq!(connect_params.user, None);
 }
