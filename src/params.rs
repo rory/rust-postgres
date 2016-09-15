@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use url::{self, Url};
 
 /// Specifies the target server to connect to.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConnectTarget {
     /// Connect via TCP to the specified host.
     Tcp(String),
@@ -16,7 +16,7 @@ pub enum ConnectTarget {
 }
 
 /// Authentication information.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UserInfo {
     /// The username.
     pub user: String,
@@ -101,3 +101,78 @@ impl IntoConnectParams for Url {
         })
     }
 }
+
+pub struct DynamicParams {
+    host: Option<String>,
+    port: Option<u16>,
+    user: Option<String>,
+    password: Option<String>,
+    database: Option<String>,
+    options: Vec<(String, String)>,
+}
+
+impl DynamicParams {
+    pub fn new() -> Self {
+        DynamicParams{ host: None, port: None, user: None, password: None, database: None, options: Vec::new() }
+    }
+
+    pub fn user<S>(mut self, user: S) -> Self where S: Into<String> {
+        self.user = Some(user.into());
+        self
+    }
+
+    pub fn password<S>(mut self, password: S) -> Self where S: Into<String> {
+        self.password = Some(password.into());
+        self
+    }
+    // Convenience methods
+    pub fn username<S>(mut self, user: S) -> Self where S: Into<String> { self.user(user) }
+    pub fn pass<S>(mut self, pass: S) -> Self where S: Into<String> { self.password(pass) }
+
+    pub fn database<S>(mut self, database: S) -> Self where S: Into<String> {
+        self.database = Some(database.into());
+        self
+    }
+
+    pub fn host<S>(mut self, host: S) -> Self where S: Into<String> {
+        self.host = Some(host.into());
+        self
+    }
+
+    pub fn port(mut self, port: u16) -> Self {
+        self.port = Some(port);
+        self
+    }
+
+    pub fn option<S>(mut self, k: S, v: S) -> Self where S: Into<String> {
+        self.options.push((k.into(), v.into()));
+        self
+    }
+}
+
+impl IntoConnectParams for DynamicParams {
+    fn into_connect_params(self) -> Result<ConnectParams, Box<Error + Sync + Send>> {
+        let user = try!(self.user.ok_or("Must specify username".to_string()));
+        let userinfo = UserInfo {
+                user: user,
+                password: self.password,
+        };
+
+        let target = match self.host {
+            None => ConnectTarget::Unix(PathBuf::from(format!("/var/run/postgresql/.s.PGSQL.{}", self.port.unwrap_or(5432)))),
+            Some(h) => ConnectTarget::Tcp(h),
+        };
+        let port: Option<u16> = self.port;
+        let database = self.database;
+
+        Ok(ConnectParams {
+            target: target,
+            port: port,
+            user: Some(userinfo),
+            database: database,
+            options: self.options,
+        })
+        
+    }
+}
+

@@ -22,6 +22,7 @@ use postgres::error::ErrorPosition::Normal;
 use postgres::rows::RowIndex;
 use postgres::notification::Notification;
 use postgres::params::IntoConnectParams;
+use postgres::params::{DynamicParams, ConnectParams, ConnectTarget, UserInfo};
 use std::thread;
 use std::io;
 use std::time::Duration;
@@ -1076,3 +1077,38 @@ fn transaction_set_config() {
     trans.set_config(&config).unwrap();
     trans.finish().unwrap();
 }
+
+#[test]
+fn test_easy_dynamic_connect_params() {
+    let connect_params: ConnectParams = DynamicParams::new().user("postgres".to_string()).into_connect_params().unwrap();
+
+    assert_eq!(connect_params.target, ConnectTarget::Unix(::std::path::PathBuf::from("/var/run/postgresql/.s.PGSQL.5432")));
+    assert_eq!(connect_params.port, None);
+    assert_eq!(connect_params.user, Some(UserInfo { user: "postgres".to_string(), password: None} ));
+    assert_eq!(connect_params.options, vec![]);
+    assert_eq!(connect_params.database, None);
+
+    let connect_params = DynamicParams::new().into_connect_params();
+    // Currently the username is required
+    assert!(connect_params.is_err());
+
+    let connect_params: ConnectParams = DynamicParams::new().user("postgres").pass("password").into_connect_params().unwrap();
+    assert_eq!(connect_params.user, Some(UserInfo { user: "postgres".to_string(), password: Some("password".to_string())} ));
+
+    let connect_params: ConnectParams = DynamicParams::new().user("postgres").host("example.com").into_connect_params().unwrap();
+    assert_eq!(connect_params.target, ConnectTarget::Tcp("example.com".to_string()));
+
+    let connect_params: ConnectParams = DynamicParams::new().user("postgres").port(9999).into_connect_params().unwrap();
+    assert_eq!(connect_params.target, ConnectTarget::Unix(::std::path::PathBuf::from("/var/run/postgresql/.s.PGSQL.9999")));
+    assert_eq!(connect_params.port, Some(9999));
+
+    let connect_params: ConnectParams = DynamicParams::new().user("postgres").host("localhost").port(9999).into_connect_params().unwrap();
+    assert_eq!(connect_params.target, ConnectTarget::Tcp("localhost".to_string()));
+    assert_eq!(connect_params.port, Some(9999));
+
+    let connect_params: ConnectParams = DynamicParams::new().user("postgres").option("a", "b").option("x", "y").into_connect_params().unwrap();
+    assert_eq!(connect_params.options, vec![("a".to_string(), "b".to_string()), ("x".to_string(), "y".to_string())]);
+
+}
+
+
