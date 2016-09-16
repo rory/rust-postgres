@@ -102,7 +102,7 @@ impl IntoConnectParams for Url {
     }
 }
 
-pub struct DynamicParams {
+pub struct Params {
     host: Option<String>,
     port: Option<u16>,
     user: Option<String>,
@@ -111,9 +111,9 @@ pub struct DynamicParams {
     options: Vec<(String, String)>,
 }
 
-impl DynamicParams {
+impl Params {
     pub fn new() -> Self {
-        DynamicParams{ host: None, port: None, user: None, password: None, database: None, options: Vec::new() }
+        Params{ host: None, port: None, user: None, password: None, database: None, options: Vec::new() }
     }
 
     pub fn user<S>(mut self, user: S) -> Self where S: Into<String> {
@@ -148,14 +148,40 @@ impl DynamicParams {
         self.options.push((k.into(), v.into()));
         self
     }
+
+    pub fn opt_user<S>(mut self, user: Option<S>) -> Self where S: Into<String> {
+        self.user = user.map(|x| x.into());
+        self
+    }
+    pub fn opt_username<S>(mut self, user: Option<S>) -> Self where S: Into<String> { self.opt_user(user) }
+
+    pub fn opt_password<S>(mut self, password: Option<S>) -> Self where S: Into<String> {
+        self.password = password.map(|x| x.into());
+        self
+    }
+    pub fn opt_pass<S>(mut self, pass: Option<S>) -> Self where S: Into<String> { self.opt_password(pass) }
+
+    pub fn opt_database<S>(mut self, database: Option<S>) -> Self where S: Into<String> {
+        self.database = database.map(|x| x.into());
+        self
+    }
+
+    pub fn opt_host<S>(mut self, h: Option<S>) -> Self where S: Into<String> {
+        self.host = h.map(|x| x.into());
+        self
+    }
+
+    pub fn opt_port(mut self, port: Option<u16>) -> Self {
+        self.port = port;
+        self
+    }
 }
 
-impl IntoConnectParams for DynamicParams {
+impl IntoConnectParams for Params {
     fn into_connect_params(self) -> Result<ConnectParams, Box<Error + Sync + Send>> {
-        let user = try!(self.user.ok_or("Must specify username".to_string()));
-        let userinfo = UserInfo {
-                user: user,
-                password: self.password,
+        let user = match self.user {
+            None => None,
+            Some(user) => { Some(UserInfo { user: user, password: self.password, }) },
         };
 
         let target = match self.host {
@@ -168,7 +194,7 @@ impl IntoConnectParams for DynamicParams {
         Ok(ConnectParams {
             target: target,
             port: port,
-            user: Some(userinfo),
+            user: user,
             database: database,
             options: self.options,
         })
