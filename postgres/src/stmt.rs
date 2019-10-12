@@ -420,6 +420,46 @@ impl<'conn> Statement<'conn> {
         Ok(num)
     }
 
+    pub fn copy_in_writer(self, params: &[&ToSql]) -> Result<CopyInWriterHandle<'conn>> {
+        let mut conn = self.conn.0.borrow_mut();
+        conn.raw_execute(
+            &self.info.name,
+            "",
+            0,
+            self.param_types(),
+            params,
+        )?;
+
+        let format = match conn.read_message()? {
+            backend::Message::CopyInResponse(body) => {
+                let format = body.format();
+                //let column_formats = body.column_formats().map(|f| Format::from_u16(f)).collect().unwrap();
+                format
+                //(format, column_formats)
+            }
+            backend::Message::ErrorResponse(body) => {
+                conn.wait_for_ready()?;
+                return Err(err(&mut body.fields()));
+            }
+            _ => {
+                loop {
+                    if let backend::Message::ReadyForQuery(_) = conn.read_message()? {
+                        return Err(
+                            io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "called `copy_in` on a non-`COPY FROM STDIN` statement",
+                            ).into(),
+                        );
+                    }
+                }
+            }
+        };
+
+        Ok(CopyInWriterHandle{ conn: self.conn })
+
+    }
+
+
     /// Executes a `COPY TO STDOUT` statement, passing the resulting data to
     /// the provided writer and returning the number of rows received.
     ///
@@ -646,4 +686,56 @@ impl Format {
 
 fn parse_update_count(tag: &str) -> u64 {
     tag.split(' ').last().unwrap().parse().unwrap_or(0)
+}
+
+pub struct CopyInWriterHandle<'conn> {
+    conn: &'conn Connection
+}
+
+impl<'conn> CopyInWriterHandle<'conn> {
+    pub fn finish(mut self) -> Result<usize> {
+        //self.write_all("\n\\.\n".as_bytes())?;
+        let mut conn = self.conn.0.borrow_mut();
+        //let num = match conn.read_message()? {
+        //    backend::Message::CommandComplete(body) => {
+        //        parse_update_count(body.tag()?)
+        //    },
+        //    backend::Message::ErrorResponse(body) => {
+        //        conn.wait_for_ready()?;
+        //        return Err(err(&mut body.fields()));
+        //    }
+        //    _ => {
+        //        conn.desynchronized = true;
+        //        return Err(bad_response().into());
+        //    }
+        //};
+        dbg!("here");
+
+        //conn.wait_for_ready()?;
+        Ok(0)
+    }
+}
+
+impl<'conn> Write for CopyInWriterHandle<'conn> {
+
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut conn = self.conn.0.borrow_mut();
+        conn.stream.write_message(
+            |out| frontend::copy_data(&buf, out),
+        )?;
+
+        conn.stream.write_message(|buf| {
+            Ok::<(), io::Error>(frontend::copy_done(buf))
+        })?;
+        conn.stream.write_message(
+            |buf| Ok::<(), io::Error>(frontend::sync(buf)),
+        )?;
+
+        // FIXME fill in
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.conn.0.borrow_mut().stream.flush()
+    }
 }

@@ -1,3 +1,4 @@
+#![allow(bare_trait_objects,deprecated,unused_variables,dead_code)]
 //! A pure-Rust frontend for the popular PostgreSQL database.
 //!
 //! ```rust,no_run
